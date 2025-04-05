@@ -23,80 +23,99 @@ def set_up_video_seek_line_edit(main_window: 'MainWindow'):
     videoSeekLineEdit.setValidator(QtGui.QIntValidator(0, video_processor.max_frame_number))  # Restrict input to numbers 
 
 def set_up_video_seek_slider(main_window: 'MainWindow'):
-    main_window.videoSeekSlider.markers = set()  # Store unique tick positions
-    main_window.videoSeekSlider.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)  # Default position for tick marks
+    class CustomSlider(QtWidgets.QSlider):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.markers = set()
+            self.main_window = None
+            self._initialized = False
 
-    def add_marker_and_paint(self: QtWidgets.QSlider, value=None):
-        """Add a tick mark at a specific slider value."""
-        if value is None or isinstance(value, bool):  # Default to current slider value
-            value = self.value()
-        if self.minimum() <= value <= self.maximum() and value not in self.markers:
-            self.markers.add(value)
-            self.update()
+        def initialize(self, main_window):
+            if not self._initialized:
+                self.main_window = main_window
+                self.setMinimum(0)
+                self.setMaximum(main_window.video_processor.max_frame_number)
+                self.setValue(0)
+                self.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)
+                self._initialized = True
 
-    def remove_marker_and_paint(self:QtWidgets.QSlider, value=None):
-        """Remove a tick mark."""
-        if value is None or isinstance(value, bool):  # Default to current slider value
-            value = self.value()
-        if value in self.markers:
-            self.markers.remove(value)
-            self.update()
+        def paintEvent(self, event):
+            # Всегда рисуем базовый слайдер
+            super().paintEvent(event)
 
-    def paintEvent(self: QtWidgets.QSlider, event:QtGui.QPaintEvent):
-        # Dont need a seek slider if the current selected file is an image
-        if main_window.video_processor.file_type=='image':
-            return super(QtWidgets.QSlider, self).paintEvent(event)
-        # Set up the painter and style option
-        painter = QtWidgets.QStylePainter(self)
-        opt = QtWidgets.QStyleOptionSlider()
-        self.initStyleOption(opt)
-        style = self.style()
+            # Если нет маркеров, выходим
+            if not self.markers:
+                return
 
-        # Get groove and handle geometry
-        groove_rect = style.subControlRect(
-            QtWidgets.QStyle.ComplexControl.CC_Slider, opt, QtWidgets.QStyle.SubControl.SC_SliderGroove
-        )
-        groove_y = (groove_rect.top() + groove_rect.bottom()) // 2  # Groove's vertical center
-        groove_start = groove_rect.left()
-        groove_end = groove_rect.right()
-        groove_width = groove_end - groove_start
+            # Отрисовываем маркеры
+            painter = QtWidgets.QStylePainter(self)
+            try:
+                opt = QtWidgets.QStyleOptionSlider()
+                self.initStyleOption(opt)
+                style = self.style()
 
-        # Calculate handle position based on the current slider value
-        normalized_value = (self.value() - self.minimum()) / (self.maximum() - self.minimum())
-        handle_center_x = groove_start + normalized_value * groove_width
+                # Get groove geometry
+                groove_rect = style.subControlRect(
+                    QtWidgets.QStyle.ComplexControl.CC_Slider,
+                    opt,
+                    QtWidgets.QStyle.SubControl.SC_SliderGroove,
+                    self
+                )
 
-        # Make the handle thinner
-        handle_width = 5  # Fixed width for thin handle
-        handle_height = groove_rect.height()  # Slightly shorter than groove height
-        handle_left_x = handle_center_x - (handle_width // 2)
-        handle_top_y = groove_y - (handle_height // 2)
+                # Draw markers
+                painter.setPen(QtGui.QPen(QtGui.QColor("#e8483c"), 2))
+                groove_start = groove_rect.left()
+                groove_width = groove_rect.right() - groove_start
+                for value in sorted(self.markers):
+                    marker_normalized_value = (value - self.minimum()) / (self.maximum() - self.minimum())
+                    marker_x = groove_start + marker_normalized_value * groove_width
+                    painter.drawLine(marker_x, groove_rect.top(), marker_x, groove_rect.bottom())
+            finally:
+                painter.end()
 
-        # Define the handle rectangle
-        handle_rect = QtCore.QRect(
-            handle_left_x, handle_top_y, handle_width, handle_height
-        )
+    # Проверяем, существует ли уже кастомный слайдер
+    if not isinstance(main_window.videoSeekSlider, CustomSlider):
+        # Создаем новый слайдер только если текущий не является CustomSlider
+        new_slider = CustomSlider(QtCore.Qt.Horizontal)
+        new_slider.initialize(main_window)
 
-        # Draw the groove
-        painter.setPen(QtGui.QPen(QtGui.QColor("gray"), 3))  # Groove color and thickness
-        painter.drawLine(groove_start, groove_y, groove_end, groove_y)
+        # Заменяем старый слайдер новым в layout
+        old_slider = main_window.videoSeekSlider
+        parent_layout = old_slider.parent()
+        layout_pos = parent_layout.layout().indexOf(old_slider)
+        parent_layout.layout().removeWidget(old_slider)
+        parent_layout.layout().insertWidget(layout_pos, new_slider)
 
-        # Draw the thin handle
-        painter.setPen(QtGui.QPen(QtGui.QColor("white"), 1))  # Handle border color
-        painter.setBrush(QtGui.QBrush(QtGui.QColor("white")))  # Handle fill color
-        painter.drawRect(handle_rect)
+        # Подключаем сигналы к новому слайдеру
+        new_slider.valueChanged.connect(lambda value: on_change_video_seek_slider(main_window, value))
+        new_slider.sliderMoved.connect(lambda: on_slider_moved(main_window))
+        new_slider.sliderPressed.connect(lambda: on_slider_pressed(main_window))
+        new_slider.sliderReleased.connect(lambda: on_slider_released(main_window))
 
-        # Draw markers (if any)
-        if self.markers:
-            painter.setPen(QtGui.QPen(QtGui.QColor("#e8483c"), 2))  # Marker color and thickness
-            for value in sorted(self.markers):
-                # Calculate marker position
-                marker_normalized_value = (value - self.minimum()) / (self.maximum() - self.minimum())
-                marker_x = groove_start + marker_normalized_value * groove_width
-                painter.drawLine(marker_x, groove_rect.top(), marker_x, groove_rect.bottom())
+        # Добавляем методы для работы с маркерами
+        def add_marker_and_paint(self: QtWidgets.QSlider, value=None):
+            if value is None or isinstance(value, bool):
+                value = self.value()
+            if self.minimum() <= value <= self.maximum() and value not in self.markers:
+                self.markers.add(value)
+                self.update()
 
-    main_window.videoSeekSlider.add_marker_and_paint = partial(add_marker_and_paint, main_window.videoSeekSlider)
-    main_window.videoSeekSlider.remove_marker_and_paint = partial(remove_marker_and_paint, main_window.videoSeekSlider)
-    main_window.videoSeekSlider.paintEvent = partial(paintEvent, main_window.videoSeekSlider)
+        def remove_marker_and_paint(self: QtWidgets.QSlider, value=None):
+            if value is None or isinstance(value, bool):
+                value = self.value()
+            if value in self.markers:
+                self.markers.remove(value)
+                self.update()
+
+        new_slider.add_marker_and_paint = partial(add_marker_and_paint, new_slider)
+        new_slider.remove_marker_and_paint = partial(remove_marker_and_paint, new_slider)
+
+        # Удаляем старый слайдер и сохраняем новый
+        old_slider.deleteLater()
+        main_window.videoSeekSlider = new_slider
+    else:
+        # Если слайдер уже является CustomSlider, просто обновляем его состояние
+        main_window.videoSeekSlider.initialize(main_window)
 
 def add_video_slider_marker(main_window: 'MainWindow'):
     if main_window.selected_video_button.file_type!='video':

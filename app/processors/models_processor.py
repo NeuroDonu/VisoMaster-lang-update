@@ -241,7 +241,14 @@ class ModelsProcessor(QtCore.QObject):
                                 ('CPUExecutionProvider')
                             ]
                 self.device = 'cuda'
-            #case _:
+            case _:
+                # Default to CUDA if provider is not recognized
+                providers = [
+                                ('CUDAExecutionProvider'),
+                                ('CPUExecutionProvider')
+                            ]
+                self.device = 'cuda'
+                provider_name = "CUDA"
 
         self.providers = providers
         self.provider_name = provider_name

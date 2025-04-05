@@ -1,3 +1,8 @@
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 from typing import Dict
 from pathlib import Path
 from functools import partial
@@ -5,6 +10,7 @@ import copy
 
 from PySide6 import QtWidgets, QtGui
 from PySide6 import QtCore
+from PySide6.QtWidgets import QApplication
 
 from app.ui.core.main_window import Ui_MainWindow
 import app.ui.widgets.actions.common_actions as common_widget_actions
@@ -15,16 +21,17 @@ from app.ui.widgets.actions import filter_actions
 from app.ui.widgets.actions import save_load_actions
 from app.ui.widgets.actions import list_view_actions
 from app.ui.widgets.actions import graphics_view_actions
+from app.ui.translations import setup_translations, translation_manager
 
 from app.processors.video_processor import VideoProcessor
 from app.processors.models_processor import ModelsProcessor
 from app.ui.widgets import widget_components
 from app.ui.widgets.event_filters import GraphicsViewEventFilter, VideoSeekSliderEventFilter, videoSeekSliderLineEditEventFilter, ListWidgetEventFilter
 from app.ui.widgets import ui_workers
-from app.ui.widgets.common_layout_data import COMMON_LAYOUT_DATA
-from app.ui.widgets.swapper_layout_data import SWAPPER_LAYOUT_DATA
-from app.ui.widgets.settings_layout_data import SETTINGS_LAYOUT_DATA
-from app.ui.widgets.face_editor_layout_data import FACE_EDITOR_LAYOUT_DATA
+from app.ui.widgets.common_layout_data import COMMON_LAYOUT_DATA, tr as common_tr
+from app.ui.widgets.swapper_layout_data import SWAPPER_LAYOUT_DATA, tr as swapper_tr
+from app.ui.widgets.settings_layout_data import SETTINGS_LAYOUT_DATA, tr as settings_tr
+from app.ui.widgets.face_editor_layout_data import FACE_EDITOR_LAYOUT_DATA, tr as face_editor_tr
 from app.helpers.miscellaneous import DFM_MODELS_DATA, ParametersDict
 from app.helpers.typing_helper import FacesParametersTypes, ParametersTypes, ControlTypes, MarkerTypes
 
@@ -88,6 +95,22 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         self.model_loaded_signal.connect(partial(common_widget_actions.hide_model_loading_dialog, self))
         self.display_messagebox_signal.connect(partial(common_widget_actions.create_and_show_messagebox, self))
     def initialize_widgets(self):
+        # Устанавливаем политику изменения размеров для основных виджетов
+        self.setMinimumWidth(1000)
+        self.setMinimumHeight(600)
+        
+        # Устанавливаем политику изменения размеров для кнопок и чекбоксов
+        for widget in self.findChildren(QtWidgets.QPushButton):
+            widget.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
+            widget.setMinimumWidth(100)
+            
+        for widget in self.findChildren(QtWidgets.QCheckBox):
+            widget.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Fixed)
+            
+        # Настраиваем размеры для панелей
+        self.controlOptionsDockWidget.setMinimumWidth(250)
+        self.input_Target_DockWidget.setMinimumWidth(250)
+        
         # Initialize QListWidget for target media
         self.targetVideosList.setFlow(QtWidgets.QListWidget.LeftToRight)
         self.targetVideosList.setWrapping(True)
@@ -180,6 +203,27 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         self.faceMaskCheckBox.clicked.connect(partial(video_control_actions.process_compare_checkboxes, self))
         self.faceCompareCheckBox.clicked.connect(partial(video_control_actions.process_compare_checkboxes, self))
 
+        # Настройка табов и их содержимого
+        self.tabWidget.setMinimumWidth(300)
+        self.tabWidget.setStyleSheet("""
+            QTabWidget::pane { 
+                border: 1px solid #444;
+                padding: 5px;
+            }
+            QTabBar::tab {
+                min-width: 100px;
+                padding: 5px 10px;
+            }
+        """)
+        
+        # Настройка скроллируемых областей в табах
+        for tab in range(self.tabWidget.count()):
+            widget = self.tabWidget.widget(tab)
+            if isinstance(widget, QtWidgets.QScrollArea):
+                widget.setWidgetResizable(True)
+                widget.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+                widget.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+
         layout_actions.add_widgets_to_tab_layout(self, LAYOUT_DATA=COMMON_LAYOUT_DATA, layoutWidget=self.commonWidgetsLayout, data_type='parameter')
         layout_actions.add_widgets_to_tab_layout(self, LAYOUT_DATA=SWAPPER_LAYOUT_DATA, layoutWidget=self.swapWidgetsLayout, data_type='parameter')
         layout_actions.add_widgets_to_tab_layout(self, LAYOUT_DATA=SETTINGS_LAYOUT_DATA, layoutWidget=self.settingsWidgetsLayout, data_type='control')
@@ -205,11 +249,37 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
         self.tabWidget.setCurrentIndex(0)
         # widget_actions.add_groupbox_and_widgets_from_layout_map(self)
     def __init__(self):
-        super(MainWindow, self).__init__()
+        super().__init__()
         self.setupUi(self)
+        
+        # Initialize parameters first
+        self.parameter_widgets: ParametersWidgetTypes = {}
+        self.parameters: ParametersTypes = ParametersDict({}, {})
+        self.control: ControlTypes = ParametersDict({}, {})
+        self.faces_parameters: FacesParametersTypes = ParametersDict({}, {})
+        self.markers: MarkerTypes = []
+        
         self.initialize_variables()
         self.initialize_widgets()
+        
+        # Setup translations after widgets are initialized
+        setup_translations(QApplication.instance())
+        self.update_translations()  # Initialize translations
+        
+        # Подключаем обработчики переключения языка
+        self.actionEnglish.triggered.connect(lambda: self.change_language("en"))
+        self.actionRussian.triggered.connect(lambda: self.change_language("ru_RU"))
+        
         self.load_last_workspace()
+
+    def change_language(self, language: str):
+        """Изменяет язык интерфейса"""
+        if translation_manager.set_language(language):
+            # Обновляем состояние действий меню
+            self.actionEnglish.setChecked(language == "en")
+            self.actionRussian.setChecked(language == "ru_RU")
+            # Обновляем все тексты
+            self.update_translations()
 
     def resizeEvent(self, event: QtGui.QResizeEvent):
         # print("Called resizeEvent()")
@@ -271,3 +341,130 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow):
 
     def save_last_workspace(self):
         pass
+
+    def update_translations(self):
+        """Update all widget translations"""
+        # Call the standard Qt retranslateUi first
+        self.retranslateUi(self)
+        
+        # Update common layout widgets
+        for category, widgets in COMMON_LAYOUT_DATA.items():
+            for widget_name, widget_data in widgets.items():
+                widget = self.parameter_widgets.get(widget_name)
+                if widget:
+                    if hasattr(widget, 'label_widget'):
+                        widget.label_widget.setText(common_tr(widget_data['label']))
+                        widget.label_widget.setToolTip(common_tr(widget_data['help']))
+                    if isinstance(widget, widget_components.SelectionBox):
+                        current_text = widget.currentText()
+                        widget.blockSignals(True)  # Блокируем сигналы чтобы избежать побочных эффектов
+                        widget.clear()
+                        if callable(widget_data['options']):
+                            options = [common_tr(opt) for opt in widget_data['options']()]
+                        else:
+                            options = [common_tr(opt) for opt in widget_data['options']]
+                        # Фильтруем пустые строки
+                        options = [opt for opt in options if opt]
+                        if options:  # Проверяем, что список не пустой
+                            widget.addItems(options)
+                            # Try to set the translated version of the current text
+                            translated_current = common_tr(current_text)
+                            if translated_current in options:
+                                widget.setCurrentText(translated_current)
+                            else:
+                                widget.setCurrentText(options[0])
+                        widget.blockSignals(False)  # Разблокируем сигналы
+                            
+        # Update settings layout widgets
+        for category, widgets in SETTINGS_LAYOUT_DATA.items():
+            for widget_name, widget_data in widgets.items():
+                widget = self.parameter_widgets.get(widget_name)
+                if widget:
+                    if hasattr(widget, 'label_widget'):
+                        widget.label_widget.setText(settings_tr(widget_data['label']))
+                        widget.label_widget.setToolTip(settings_tr(widget_data['help']))
+                    if isinstance(widget, widget_components.SelectionBox):
+                        current_text = widget.currentText()
+                        widget.blockSignals(True)  # Блокируем сигналы
+                        widget.clear()
+                        if callable(widget_data['options']):
+                            options = [settings_tr(opt) for opt in widget_data['options']()]
+                        else:
+                            options = [settings_tr(opt) for opt in widget_data['options']]
+                        # Фильтруем пустые строки
+                        options = [opt for opt in options if opt]
+                        if options:  # Проверяем, что список не пустой
+                            widget.addItems(options)
+                            # Try to set the translated version of the current text
+                            translated_current = settings_tr(current_text)
+                            if translated_current in options:
+                                widget.setCurrentText(translated_current)
+                            else:
+                                widget.setCurrentText(options[0])
+                        widget.blockSignals(False)  # Разблокируем сигналы
+
+        # Update face editor layout widgets
+        for category, widgets in FACE_EDITOR_LAYOUT_DATA.items():
+            for widget_name, widget_data in widgets.items():
+                widget = self.parameter_widgets.get(widget_name)
+                if widget:
+                    if hasattr(widget, 'label_widget'):
+                        widget.label_widget.setText(face_editor_tr(widget_data['label']))
+                        widget.label_widget.setToolTip(face_editor_tr(widget_data['help']))
+                    if isinstance(widget, widget_components.SelectionBox):
+                        current_text = widget.currentText()
+                        widget.blockSignals(True)  # Блокируем сигналы
+                        widget.clear()
+                        if callable(widget_data['options']):
+                            options = [face_editor_tr(opt) for opt in widget_data['options']()]
+                        else:
+                            options = [face_editor_tr(opt) for opt in widget_data['options']]
+                        # Фильтруем пустые строки
+                        options = [opt for opt in options if opt]
+                        if options:  # Проверяем, что список не пустой
+                            widget.addItems(options)
+                            # Try to set the translated version of the current text
+                            translated_current = face_editor_tr(current_text)
+                            if translated_current in options:
+                                widget.setCurrentText(translated_current)
+                            else:
+                                widget.setCurrentText(options[0])
+                        widget.blockSignals(False)  # Разблокируем сигналы
+
+        # Update swapper layout widgets
+        for category, widgets in SWAPPER_LAYOUT_DATA.items():
+            for widget_name, widget_data in widgets.items():
+                widget = self.parameter_widgets.get(widget_name)
+                if widget:
+                    if hasattr(widget, 'label_widget'):
+                        widget.label_widget.setText(swapper_tr(widget_data['label']))
+                        widget.label_widget.setToolTip(swapper_tr(widget_data['help']))
+                    if isinstance(widget, widget_components.SelectionBox):
+                        current_text = widget.currentText()
+                        widget.blockSignals(True)  # Блокируем сигналы
+                        widget.clear()
+                        if callable(widget_data['options']):
+                            options = [swapper_tr(opt) for opt in widget_data['options']()]
+                        else:
+                            options = [swapper_tr(opt) for opt in widget_data['options']]
+                        # Фильтруем пустые строки
+                        options = [opt for opt in options if opt]
+                        if options:  # Проверяем, что список не пустой
+                            widget.addItems(options)
+                            # Try to set the translated version of the current text
+                            translated_current = swapper_tr(current_text)
+                            if translated_current in options:
+                                widget.setCurrentText(translated_current)
+                            else:
+                                widget.setCurrentText(options[0])
+                        widget.blockSignals(False)  # Разблокируем сигналы
+
+    def toggle_language(self):
+        """Toggle between Russian and English languages"""
+        translation_manager.toggle_language()
+        self.update_translations()
+        # Update button text
+        if translation_manager.current_language == 'ru_RU':
+            self.languageButton.setText('EN')
+        else:
+            self.languageButton.setText('RU')
